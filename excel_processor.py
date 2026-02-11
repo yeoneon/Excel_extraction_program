@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import openpyxl
 from openpyxl.drawing.image import Image as XLImage
+from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor, XDRPositiveSize2D
 from datetime import datetime
 import random
 from logger import logger
@@ -42,12 +43,17 @@ class ExcelHandler:
                 img = XLImage(img_path)
                 img.width, img.height = 200, 75
                 
-                # Move 20pt right (1pt = 12700 EMUs)
-                ws.add_image(img, 'E22')
-                if hasattr(img.anchor, '_from'):
-                    img.anchor._from.colOff = 20 * 12700
+                # Precise positioning: 10pt right and 10pt down from E22 marker
+                # Column E is index 4, Row 22 is index 21 (0-indexed)
+                # 1pt = 12700 EMUs, 1px = 9525 EMUs
+                marker = AnchorMarker(col=4, colOff=10 * 12700, row=21, rowOff=3 * 12700)
                 
-                logger.debug(f"Added signature with 20pt offset: {img_path}")
+                # We must define the size (Extent) in EMUs for OneCellAnchor
+                size = XDRPositiveSize2D(cx=img.width * 9525, cy=img.height * 9525)
+                img.anchor = OneCellAnchor(_from=marker, ext=size)
+                
+                ws.add_image(img)
+                logger.debug(f"Added signature with OneCellAnchor (10pt offset): {img_path}")
             else:
                 logger.warning("No signature files found in directory.")
         except Exception as e:
@@ -94,15 +100,17 @@ class ExcelHandler:
 
                     # Enrichment
                     company_name_en = self.api_handler.get_romanized_text(company_name, is_company=True)
-                    phone, zip_code, english_address = self.api_handler.get_naver_data(address_ko, company_name)
+                    phone, zip_code, address_en_fetched = self.api_handler.get_enriched_data(address_ko, company_name)
                     
                     # Use fetched English address if available, otherwise Romanize
-                    if english_address:
-                        address_en = english_address
-                        logger.info(f"Using actual English address from Naver: {address_en}")
+                    if address_en_fetched:
+                        address_en = address_en_fetched
+                        logger.info(f"Using actual English address from NCP: {address_en}")
                     else:
                         address_en = self.api_handler.get_romanized_text(address_ko)
                         logger.info(f"Falling back to Romanized address: {address_en}")
+                    
+                    logger.info(f"Enriched Data -> Phone: {phone}, Zip: {zip_code}")
 
                     # Loading Template
                     wb = openpyxl.load_workbook(self.form_path)
@@ -135,7 +143,8 @@ class ExcelHandler:
                     
                     # Debugging: Stop after the first row as requested
                     logger.info("Debug mode: Stopping after the first row.")
-                    break
+                    if processed_count == 2:
+                        break
 
                 except Exception as row_error:
                     logger.error(f"Error in row {index + 1}: {row_error}", exc_info=True)

@@ -16,9 +16,7 @@ class ExcelProcessorApp(ctk.CTk):
 
         self.source_file_path = ""
         self.form_file_path = ""
-        self.signature_dir = ""
-        self.naver_client_id = ""
-        self.naver_client_secret = ""
+        self.kakao_api_key = ""
         self.ncp_client_id = ""
         self.ncp_client_secret = ""
         
@@ -49,7 +47,7 @@ class ExcelProcessorApp(ctk.CTk):
         # API Settings Section
         self.api_frame = ctk.CTkFrame(self.main_frame, fg_color="white", corner_radius=0)
         self.api_frame.pack(fill="x", pady=5)
-        ctk.CTkLabel(self.api_frame, text="🔑 네이버 API 설정", font=("Malgun Gothic", 16, "bold"), anchor="w").pack(fill="x", padx=10, pady=(10, 5))
+        ctk.CTkLabel(self.api_frame, text="🔑 API 설정 (NCP & Kakao)", font=("Malgun Gothic", 16, "bold"), anchor="w").pack(fill="x", padx=10, pady=(10, 5))
         self.api_status_label = ctk.CTkLabel(self.api_frame, text="API 키를 설정해주세요", font=("Malgun Gothic", 12), text_color="#666666")
         self.api_status_label.pack(side="left", padx=10, pady=5)
         ctk.CTkButton(self.api_frame, text="설정", width=60, height=30, fg_color="#1FA1FF", command=self.open_api_settings).pack(side="right", padx=10, pady=5)
@@ -106,47 +104,39 @@ class ExcelProcessorApp(ctk.CTk):
 
     def open_api_settings(self):
         dialog = ctk.CTkToplevel(self)
-        dialog.title("네이버 API 설정")
-        dialog.geometry("450x450")
+        dialog.title("API 설정")
+        dialog.geometry("450x400")
         dialog.transient(self)
         
-        # 1. Search API (Client ID/Secret)
-        ctk.CTkLabel(dialog, text="[검색 API] Naver Client ID:").pack(pady=(20, 5))
-        search_id_entry = ctk.CTkEntry(dialog, width=350)
-        search_id_entry.insert(0, self.naver_client_id)
-        search_id_entry.pack(pady=5)
-        ctk.CTkLabel(dialog, text="[검색 API] Naver Client Secret:").pack(pady=(5, 5))
-        search_secret_entry = ctk.CTkEntry(dialog, width=350, show="*")
-        search_secret_entry.insert(0, self.naver_client_secret)
-        search_secret_entry.pack(pady=5)
+        # 1. Kakao API
+        ctk.CTkLabel(dialog, text="[전화번호 검색] Kakao REST API Key:").pack(pady=(20, 5))
+        kakao_key_entry = ctk.CTkEntry(dialog, width=350, show="*")
+        kakao_key_entry.insert(0, self.kakao_api_key)
+        kakao_key_entry.pack(pady=5)
 
         # 2. Maps API (NCP ID/Key)
-        ctk.CTkLabel(dialog, text="[지도 API] NCP Client ID:").pack(pady=(15, 5))
+        ctk.CTkLabel(dialog, text="[영문주소/우편번호] NCP Client ID:").pack(pady=(15, 5))
         ncp_id_entry = ctk.CTkEntry(dialog, width=350)
         ncp_id_entry.insert(0, self.ncp_client_id)
         ncp_id_entry.pack(pady=5)
-        ctk.CTkLabel(dialog, text="[지도 API] NCP Client Secret:").pack(pady=(5, 5))
+        ctk.CTkLabel(dialog, text="[영문주소/우편번호] NCP Client Secret:").pack(pady=(5, 5))
         ncp_secret_entry = ctk.CTkEntry(dialog, width=350, show="*")
         ncp_secret_entry.insert(0, self.ncp_client_secret)
         ncp_secret_entry.pack(pady=5)
 
         def save():
-            self.naver_client_id = search_id_entry.get().strip()
-            self.naver_client_secret = search_secret_entry.get().strip()
+            self.kakao_api_key = kakao_key_entry.get().strip()
             self.ncp_client_id = ncp_id_entry.get().strip()
             self.ncp_client_secret = ncp_secret_entry.get().strip()
             self.save_settings()
             self.update_api_status()
-            logger.info("API settings updated by user")
+            logger.info("API settings updated by user (Kakao + NCP)")
             dialog.destroy()
         ctk.CTkButton(dialog, text="저장", command=save).pack(pady=20)
 
     def update_api_status(self):
-        if self.naver_client_id and self.naver_client_secret:
-            status = "API 키 설정됨 ✅"
-            if self.ncp_client_id and self.ncp_client_secret:
-                status = "모든 API 키 설정됨 ✅"
-            self.api_status_label.configure(text=status, text_color="green")
+        if self.kakao_api_key and self.ncp_client_id and self.ncp_client_secret:
+            self.api_status_label.configure(text="모든 API 키 설정됨 ✅", text_color="green")
         else:
             self.api_status_label.configure(text="API 키를 설정해주세요", text_color="#666666")
         self.check_files_selected()
@@ -156,8 +146,7 @@ class ExcelProcessorApp(ctk.CTk):
             try:
                 with open("settings.json", "r") as f:
                     settings = json.load(f)
-                    self.naver_client_id = settings.get("naver_client_id", "")
-                    self.naver_client_secret = settings.get("naver_client_secret", "")
+                    self.kakao_api_key = settings.get("kakao_api_key", "")
                     self.ncp_client_id = settings.get("ncp_client_id", "")
                     self.ncp_client_secret = settings.get("ncp_client_secret", "")
                     self.source_file_path = settings.get("source_file_path", "")
@@ -169,8 +158,7 @@ class ExcelProcessorApp(ctk.CTk):
     def save_settings(self):
         try:
             settings = {
-                "naver_client_id": self.naver_client_id, 
-                "naver_client_secret": self.naver_client_secret,
+                "kakao_api_key": self.kakao_api_key, 
                 "ncp_client_id": self.ncp_client_id,
                 "ncp_client_secret": self.ncp_client_secret,
                 "source_file_path": self.source_file_path,
@@ -186,7 +174,7 @@ class ExcelProcessorApp(ctk.CTk):
         if not hasattr(self, 'run_button'):
             return
             
-        if all([self.source_file_path, self.form_file_path, self.signature_dir, self.naver_client_id]):
+        if all([self.source_file_path, self.form_file_path, self.signature_dir, self.kakao_api_key]):
             self.run_button.configure(state="normal", text="📊 추출 및 실행하기", fg_color="#1FA1FF")
         else:
             self.run_button.configure(state="disabled", text="📂 모든 정보를 설정해주세요", fg_color="#A0A0A0")
@@ -195,10 +183,9 @@ class ExcelProcessorApp(ctk.CTk):
         try:
             logger.info("Button 'Execute' clicked. Starting process...")
             api_handler = APIHandler(
-                self.naver_client_id, 
-                self.naver_client_secret,
                 ncp_client_id=self.ncp_client_id,
-                ncp_client_secret=self.ncp_client_secret
+                ncp_client_secret=self.ncp_client_secret,
+                kakao_api_key=self.kakao_api_key
             )
             excel_handler = ExcelHandler(self.source_file_path, self.form_file_path, self.signature_dir, api_handler)
             
