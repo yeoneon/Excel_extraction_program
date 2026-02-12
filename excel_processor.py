@@ -41,7 +41,7 @@ class ExcelHandler:
             if sig_files:
                 img_path = os.path.join(self.signature_dir, random.choice(sig_files))
                 img = XLImage(img_path)
-                img.width, img.height = 200, 75
+                img.width, img.height = 200, 33
                 
                 # Precise positioning: 10pt right and 10pt down from E22 marker
                 # Column E is index 4, Row 22 is index 21 (0-indexed)
@@ -58,6 +58,37 @@ class ExcelHandler:
                 logger.warning("No signature files found in directory.")
         except Exception as e:
             logger.error(f"Failed to add signature: {e}")
+
+    def _reinforce_borders(self, ws):
+        """Reinforces right border for specific cells that lose styling."""
+        from openpyxl.styles.borders import Border, Side
+        thin = Side(border_style="thin", color="000000")
+        
+        # Target cells: F14, F16, F17, F18, F19
+        target_cells = ['F14', 'F16', 'F17', 'F18', 'F19']
+        
+        for coord in target_cells:
+            cell = ws[coord]
+            # Create a new border with only the right side set, keeping others if possible
+            # Note: openpyxl overwrites the whole border object, so we must be careful.
+            # However, user asked to "only draw the right side". 
+            # If we want to PRESERVE existing borders, we'd need to copy them.
+            # Assuming the issue is specifically the right border disappearing:
+            
+            existing = cell.border
+            new_border = Border(
+                left=existing.left,
+                right=thin,  # Enforce right border
+                top=existing.top,
+                bottom=existing.bottom,
+                diagonal=existing.diagonal,
+                diagonal_direction=existing.diagonal_direction,
+                outline=existing.outline,
+                vertical=existing.vertical,
+                horizontal=existing.horizontal
+            )
+            cell.border = new_border
+            logger.debug(f"Reinforced right border for {coord}")
 
     def process(self):
         """Main processing loop for Excel rows."""
@@ -131,6 +162,9 @@ class ExcelHandler:
 
                     # Signature
                     self._add_signature(ws)
+                    
+                    # Reinforce borders for F14, F16-19
+                    self._reinforce_borders(ws)
 
                     # Save
                     template_name = os.path.splitext(os.path.basename(self.form_path))[0]
@@ -143,8 +177,8 @@ class ExcelHandler:
                     
                     # Debugging: Stop after the first row as requested
                     logger.info("Debug mode: Stopping after the first row.")
-                    if processed_count == 2:
-                        break
+                    # if processed_count == 3:
+                    #     break
 
                 except Exception as row_error:
                     logger.error(f"Error in row {index + 1}: {row_error}", exc_info=True)

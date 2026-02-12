@@ -16,6 +16,7 @@ class ExcelProcessorApp(ctk.CTk):
 
         self.source_file_path = ""
         self.form_file_path = ""
+        self.signature_dir = ""
         self.kakao_api_key = ""
         self.ncp_client_id = ""
         self.ncp_client_secret = ""
