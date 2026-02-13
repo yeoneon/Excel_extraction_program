@@ -166,10 +166,20 @@ class ExcelHandler:
                     # Reinforce borders for F14, F16-19
                     self._reinforce_borders(ws)
 
+
                     # Save
                     template_name = os.path.splitext(os.path.basename(self.form_path))[0]
-                    save_filename = f"{template_name}_{company_name}.xlsx"
+                    base_filename = f"{template_name}_{company_name}"
+                    save_filename = f"{base_filename}.xlsx"
                     save_path = os.path.join(output_dir, save_filename)
+
+                    counter = 1
+                    while os.path.exists(save_path):
+                        save_filename = f"{base_filename}_{counter}.xlsx"
+                        save_path = os.path.join(output_dir, save_filename)
+                        logger.info(f"File exists, trying new name: {save_filename}")
+                        counter += 1
+                    
                     wb.save(save_path)
                     
                     logger.info(f"Saved: {save_path}")
