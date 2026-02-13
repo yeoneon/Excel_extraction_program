@@ -90,6 +90,23 @@ class ExcelHandler:
             cell.border = new_border
             logger.debug(f"Reinforced right border for {coord}")
 
+        # Reinforce top border for B22 as requested by user
+        cell_b22 = ws['B22']
+        existing_b22 = cell_b22.border
+        new_border_b22 = Border(
+            left=existing_b22.left,
+            right=existing_b22.right,
+            top=thin,  # Enforce top border
+            bottom=existing_b22.bottom,
+            diagonal=existing_b22.diagonal,
+            diagonal_direction=existing_b22.diagonal_direction,
+            outline=existing_b22.outline,
+            vertical=existing_b22.vertical,
+            horizontal=existing_b22.horizontal
+        )
+        cell_b22.border = new_border_b22
+        logger.debug("Reinforced top border for B22")
+
     def process(self):
         """Main processing loop for Excel rows."""
         try:
@@ -170,6 +187,13 @@ class ExcelHandler:
                     # Save
                     template_name = os.path.splitext(os.path.basename(self.form_path))[0]
                     base_filename = f"{template_name}_{company_name}"
+                    
+                    # Prepend markers if data is missing
+                    if not phone:
+                        base_filename = f"전화번호_{base_filename}"
+                    if not zip_code:
+                        base_filename = f"우편_{base_filename}"
+
                     save_filename = f"{base_filename}.xlsx"
                     save_path = os.path.join(output_dir, save_filename)
 
