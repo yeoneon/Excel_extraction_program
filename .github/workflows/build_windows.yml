@@ -24,7 +24,7 @@ jobs:
 
     - name: Build with PyInstaller
       run: |
-        pyinstaller --name "ExcelProcessor" --onefile --windowed --icon=NONE main.py
+        pyinstaller --name "ExcelProcessor" --onefile --windowed --icon=NONE --collect-all customtkinter --collect-all korean_romanizer --hidden-import PIL main.py
         # You can add --icon="assets/icon.ico" if you have an icon
 
     - name: Upload Artifact
