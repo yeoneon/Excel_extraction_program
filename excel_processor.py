@@ -310,7 +310,7 @@ class KakaoExcelHandler(ExcelHandler):
                         TextBlock(normal_large_font, ", acting in my capacity as 담당자 and authorised representative of the Point of Origin, hereby declare, confirm and agree to the following on behalf of the Point of Origin:\n"),
                         TextBlock(normal_large_font, "본 자가선언서에 서명함으로써, 본인 "),
                         TextBlock(bold_large_font, representative),
-                        TextBlock(normal_large_font, " 는 담당자 의 직책으로서 Point of Origin의 권한 있는 대표로서 다음 사항을 Point of Origin 대신하여 선언하고, 확인하며, 이에 동의합니다.")
+                        TextBlock(normal_large_font, "는 담당자 의 직책으로서 Point of Origin의 권한 있는 대표로서 다음 사항을 Point of Origin 대신하여 선언하고, 확인하며, 이에 동의합니다.")
                     ])
                     self._safe_write(ws, 'A15', rich_text)
                     
@@ -321,7 +321,7 @@ class KakaoExcelHandler(ExcelHandler):
                     self._safe_write(ws, 'C17', f"Quantity collected : {weight}kg")
                     
                     # A35: 상호명/yyyyMMdd, D35: 대표자명/배출담당자, G35: 사인
-                    self._safe_write(ws, 'A35', f"{company_name}/{date_filename}")
+                    self._safe_write(ws, 'A35', f"{company_name} / {date_filename}")
                     self._safe_write(ws, 'D35', f"{representative}/배출담당자")
                     
                     # Signature at G35 (col 6, row 34)
