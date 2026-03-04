@@ -3,8 +3,12 @@ from tkinter import filedialog, messagebox
 import os
 import json
 from logger import logger
-from api_utils import APIHandler
-from excel_processor import ExcelHandler
+from api_utils import APIHandler, KakaoAPIHandler
+from excel_processor import ExcelHandler, KakaoExcelHandler
+
+# --- Configuration ---
+SHOW_NCP_SETTINGS = False
+# ---------------------
 
 class ExcelProcessorApp(ctk.CTk):
     def __init__(self):
@@ -48,7 +52,9 @@ class ExcelProcessorApp(ctk.CTk):
         # API Settings Section
         self.api_frame = ctk.CTkFrame(self.main_frame, fg_color="white", corner_radius=0)
         self.api_frame.pack(fill="x", pady=5)
-        ctk.CTkLabel(self.api_frame, text="🔑 API 설정 (NCP & Kakao)", font=("Malgun Gothic", 16, "bold"), anchor="w").pack(fill="x", padx=10, pady=(10, 5))
+        
+        api_title = "🔑 API 설정 (NCP & Kakao)" if SHOW_NCP_SETTINGS else "🔑 API 설정 (Kakao)"
+        ctk.CTkLabel(self.api_frame, text=api_title, font=("Malgun Gothic", 16, "bold"), anchor="w").pack(fill="x", padx=10, pady=(10, 5))
         self.api_status_label = ctk.CTkLabel(self.api_frame, text="API 키를 설정해주세요", font=("Malgun Gothic", 12), text_color="#666666")
         self.api_status_label.pack(side="left", padx=10, pady=5)
         ctk.CTkButton(self.api_frame, text="설정", width=60, height=30, fg_color="#1FA1FF", command=self.open_api_settings).pack(side="right", padx=10, pady=5)
@@ -110,33 +116,47 @@ class ExcelProcessorApp(ctk.CTk):
         dialog.transient(self)
         
         # 1. Kakao API
-        ctk.CTkLabel(dialog, text="[전화번호 검색] Kakao REST API Key:").pack(pady=(20, 5))
+        ctk.CTkLabel(dialog, text="Kakao REST API Key:").pack(pady=(20, 5))
         kakao_key_entry = ctk.CTkEntry(dialog, width=350, show="*")
         kakao_key_entry.insert(0, self.kakao_api_key)
         kakao_key_entry.pack(pady=5)
 
-        # 2. Maps API (NCP ID/Key)
-        ctk.CTkLabel(dialog, text="[영문주소/우편번호] NCP Client ID:").pack(pady=(15, 5))
-        ncp_id_entry = ctk.CTkEntry(dialog, width=350)
-        ncp_id_entry.insert(0, self.ncp_client_id)
-        ncp_id_entry.pack(pady=5)
-        ctk.CTkLabel(dialog, text="[영문주소/우편번호] NCP Client Secret:").pack(pady=(5, 5))
-        ncp_secret_entry = ctk.CTkEntry(dialog, width=350, show="*")
-        ncp_secret_entry.insert(0, self.ncp_client_secret)
-        ncp_secret_entry.pack(pady=5)
+        # 2. Maps API (NCP ID/Key) - Conditional
+        ncp_id_entry = None
+        ncp_secret_entry = None
+        
+        if SHOW_NCP_SETTINGS:
+            ctk.CTkLabel(dialog, text="[영문주소/우편번호] NCP Client ID:").pack(pady=(15, 5))
+            ncp_id_entry = ctk.CTkEntry(dialog, width=350)
+            ncp_id_entry.insert(0, self.ncp_client_id)
+            ncp_id_entry.pack(pady=5)
+            ctk.CTkLabel(dialog, text="[영문주소/우편번호] NCP Client Secret:").pack(pady=(5, 5))
+            ncp_secret_entry = ctk.CTkEntry(dialog, width=350, show="*")
+            ncp_secret_entry.insert(0, self.ncp_client_secret)
+            ncp_secret_entry.pack(pady=5)
 
         def save():
             self.kakao_api_key = kakao_key_entry.get().strip()
-            self.ncp_client_id = ncp_id_entry.get().strip()
-            self.ncp_client_secret = ncp_secret_entry.get().strip()
+            if SHOW_NCP_SETTINGS and ncp_id_entry and ncp_secret_entry:
+                self.ncp_client_id = ncp_id_entry.get().strip()
+                self.ncp_client_secret = ncp_secret_entry.get().strip()
+                logger.info("API settings updated by user (Kakao + NCP)")
+            else:
+                logger.info("API settings updated by user (Kakao Only)")
+            
             self.save_settings()
             self.update_api_status()
-            logger.info("API settings updated by user (Kakao + NCP)")
             dialog.destroy()
         ctk.CTkButton(dialog, text="저장", command=save).pack(pady=20)
 
     def update_api_status(self):
-        if self.kakao_api_key and self.ncp_client_id and self.ncp_client_secret:
+        is_set = False
+        if SHOW_NCP_SETTINGS:
+            is_set = all([self.kakao_api_key, self.ncp_client_id, self.ncp_client_secret])
+        else:
+            is_set = bool(self.kakao_api_key)
+
+        if is_set:
             self.api_status_label.configure(text="모든 API 키 설정됨 ✅", text_color="green")
         else:
             self.api_status_label.configure(text="API 키를 설정해주세요", text_color="#666666")
@@ -182,13 +202,20 @@ class ExcelProcessorApp(ctk.CTk):
 
     def process_excel(self):
         try:
-            logger.info("Button 'Execute' clicked. Starting process...")
-            api_handler = APIHandler(
-                ncp_client_id=self.ncp_client_id,
-                ncp_client_secret=self.ncp_client_secret,
-                kakao_api_key=self.kakao_api_key
-            )
-            excel_handler = ExcelHandler(self.source_file_path, self.form_file_path, self.signature_dir, api_handler)
+            logger.info(f"Button 'Execute' clicked (SHOW_NCP={SHOW_NCP_SETTINGS}). Starting process...")
+            
+            if SHOW_NCP_SETTINGS:
+                api_handler = APIHandler(
+                    ncp_client_id=self.ncp_client_id,
+                    ncp_client_secret=self.ncp_client_secret,
+                    kakao_api_key=self.kakao_api_key
+                )
+                excel_handler = ExcelHandler(self.source_file_path, self.form_file_path, self.signature_dir, api_handler)
+            else:
+                api_handler = KakaoAPIHandler(
+                    kakao_api_key=self.kakao_api_key
+                )
+                excel_handler = KakaoExcelHandler(self.source_file_path, self.form_file_path, self.signature_dir, api_handler)
             
             count, folder = excel_handler.process()
             

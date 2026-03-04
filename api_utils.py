@@ -111,3 +111,94 @@ class APIHandler:
                 logger.error(f"Kakao Search error: {e}")
 
         return phone, zip_code, english_address
+
+class KakaoAPIHandler:
+    def __init__(self, kakao_api_key):
+        self.kakao_api_key = kakao_api_key
+        logger.info("KakaoAPIHandler initialized")
+
+    def _format_coord(self, val):
+        """Formats coordinate to 6 decimal places, replacing trailing 0 with 1."""
+        if not val:
+            return ""
+        try:
+            s = "{:.6f}".format(float(val))
+            if s.endswith('0'):
+                s = s[:-1] + '1'
+            return s
+        except (ValueError, TypeError):
+            return str(val)
+
+    def get_kakao_data(self, address, company_name=""):
+        """Fetches Phone, Zip Code, Latitude, and Longitude using ONLY Kakao API."""
+        logger.info(f"Enriching data (Kakao Only) for: {address} (Company: {company_name})")
+        phone = ""
+        zip_code = ""
+        longitude = ""
+        latitude = ""
+        raw_longitude = ""
+        raw_latitude = ""
+
+        if not self.kakao_api_key:
+            logger.error("Kakao API key is missing.")
+            return phone, zip_code, longitude, latitude
+
+        kakao_headers = {"Authorization": f"KakaoAK {self.kakao_api_key}"}
+
+        # 1. Kakao Keyword Search: Strictly for Phone Number
+        try:
+            city = address.split()[0] if address else ""
+            kakao_url = "https://dapi.kakao.com/v2/local/search/keyword.json"
+            kakao_strategies = [f"{company_name} {city}".strip(), company_name]
+
+            for query in kakao_strategies:
+                if not query: continue
+                params = {"query": query, "size": 1}
+                res = requests.get(kakao_url, headers=kakao_headers, params=params, timeout=5)
+                if res.status_code == 200:
+                    docs = res.json().get('documents', [])
+                    if docs:
+                        phone = docs[0].get('phone', '')
+                        if phone:
+                            logger.info(f"Found phone via Kakao Keyword ('{query}'): {phone}")
+                            break
+        except Exception as e:
+            logger.error(f"Kakao Keyword Search error: {e}")
+
+        # 2. Kakao Address Search: Strictly for Zip Code, Longitude (x), Latitude (y)
+        if address:
+            try:
+                addr_url = "https://dapi.kakao.com/v2/local/search/address.json"
+                params = {"query": address, "size": 1}
+                res = requests.get(addr_url, headers=kakao_headers, params=params, timeout=5)
+                if res.status_code == 200:
+                    docs = res.json().get('documents', [])
+                    if docs:
+                        doc = docs[0]
+                        
+                        # Get Coordinates from the documents root (most reliable for address)
+                        raw_longitude = doc.get('x', '')
+                        raw_latitude = doc.get('y', '')
+                        
+                        # Get Zip Code (zone_no) from road_address if available
+                        road_addr = doc.get('road_address')
+                        if road_addr:
+                            zip_code = road_addr.get('zone_no', '')
+                            # Sometimes road_address has more specific coordinates
+                            if not raw_longitude: raw_longitude = road_addr.get('x', '')
+                            if not raw_latitude: raw_latitude = road_addr.get('y', '')
+                        
+                        # Fallback for zip_code from 'address' object if road_address is missing
+                        if not zip_code:
+                            jibun_addr = doc.get('address')
+                            if jibun_addr:
+                                pass # No zone_no in jibun_addr usually
+
+                        longitude = self._format_coord(raw_longitude)
+                        latitude = self._format_coord(raw_latitude)
+                        
+                        logger.info(f"Found Spatial data via Kakao Address: Zip={zip_code}, Lat={latitude}, Long={longitude}")
+            except Exception as e:
+                logger.error(f"Kakao Address Search error: {e}")
+
+        return phone, zip_code, longitude, latitude

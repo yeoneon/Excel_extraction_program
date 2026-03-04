@@ -3,6 +3,8 @@ import pandas as pd
 import openpyxl
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor, XDRPositiveSize2D
+from openpyxl.cell.rich_text import TextBlock, CellRichText
+from openpyxl.cell.text import InlineFont
 from datetime import datetime
 import random
 from logger import logger
@@ -30,12 +32,14 @@ class ExcelHandler:
         cell.value = value
 
     def _format_date(self, raw_date):
+        if pd.isna(raw_date):
+            return "", "00000000"
         if isinstance(raw_date, (datetime, pd.Timestamp)):
             return raw_date.strftime("%Y-%m-%d"), raw_date.strftime("%Y%m%d")
         d_str = str(raw_date).replace(".", "-").replace("/", "-")
         return d_str, d_str.replace("-", "")
 
-    def _add_signature(self, ws):
+    def _add_signature(self, ws, row=21, col=4):
         try:
             sig_files = [f for f in os.listdir(self.signature_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
             if sig_files:
@@ -43,17 +47,13 @@ class ExcelHandler:
                 img = XLImage(img_path)
                 img.width, img.height = 200, 33
                 
-                # Precise positioning: 10pt right and 10pt down from E22 marker
-                # Column E is index 4, Row 22 is index 21 (0-indexed)
-                # 1pt = 12700 EMUs, 1px = 9525 EMUs
-                marker = AnchorMarker(col=4, colOff=10 * 12700, row=21, rowOff=3 * 12700)
-                
-                # We must define the size (Extent) in EMUs for OneCellAnchor
+                # Default for ExcelHandler is E22 (col 4, row 21)
+                marker = AnchorMarker(col=col, colOff=10 * 12700, row=row, rowOff=3 * 12700)
                 size = XDRPositiveSize2D(cx=img.width * 9525, cy=img.height * 9525)
                 img.anchor = OneCellAnchor(_from=marker, ext=size)
                 
                 ws.add_image(img)
-                logger.debug(f"Added signature with OneCellAnchor (10pt offset): {img_path}")
+                logger.debug(f"Added signature at row={row+1}, col={chr(65+col)}: {img_path}")
             else:
                 logger.warning("No signature files found in directory.")
         except Exception as e:
@@ -69,12 +69,6 @@ class ExcelHandler:
         
         for coord in target_cells:
             cell = ws[coord]
-            # Create a new border with only the right side set, keeping others if possible
-            # Note: openpyxl overwrites the whole border object, so we must be careful.
-            # However, user asked to "only draw the right side". 
-            # If we want to PRESERVE existing borders, we'd need to copy them.
-            # Assuming the issue is specifically the right border disappearing:
-            
             existing = cell.border
             new_border = Border(
                 left=existing.left,
@@ -108,7 +102,7 @@ class ExcelHandler:
         logger.debug("Reinforced top border for B22")
 
     def process(self):
-        """Main processing loop for Excel rows."""
+        """Original processing logic (NCP + Kakao style)."""
         try:
             today_str = datetime.now().strftime("%Y-%m-%d")
             output_dir = os.path.join(os.getcwd(), today_str)
@@ -118,7 +112,6 @@ class ExcelHandler:
 
             logger.info(f"Reading source file: {self.source_path}")
             df = pd.read_excel(self.source_path, header=5)
-            logger.info(f"Source file loaded. Columns: {df.columns.tolist()}")
             logger.info(f"Total rows to process: {len(df)}")
 
             processed_count = 0
@@ -126,48 +119,23 @@ class ExcelHandler:
                 try:
                     logger.info(f"Processing row {index + 1}...")
                     
-                    # Extraction (Adjusted based on logs: B=1, C=2, D=3, E=4, G=6)
                     raw_date = row.iloc[1]
                     date_val, date_filename = self._format_date(raw_date)
-                    
+                    if date_val == "":
+                        logger.warning(f"Skipping row {index + 1}: Invalid or missing date.")
+                        continue
                     representative = str(row.iloc[2]).strip()
                     company_name = str(row.iloc[3]).strip()
                     address_ko = str(row.iloc[4]).strip()
                     weight = str(row.iloc[6]).strip()
 
-                    # Console logs for debugging
-                    logger.info(f"--- Row Details ---")
-                    logger.info(f"Date (Col B? Index 2): {date_val}")
-                    logger.info(f"Representative (Col C? Index 3): {representative}")
-                    logger.info(f"Store Name (Col D? Index 4): {company_name}")
-                    logger.info(f"Address (Col E? Index 5): {address_ko}")
-                    logger.info(f"Weight (Col G? Index 7): {weight}")
-                    logger.info(f"-------------------")
-
-                    logger.debug(f"Row data: Company={company_name}, Date={date_val}, Weight={weight}")
-
-                    # Enrichment
-                    company_name_en = self.api_handler.get_romanized_text(company_name, is_company=True)
-                    phone, zip_code, address_en_fetched = self.api_handler.get_enriched_data(address_ko, company_name)
+                    phone, zip_code, longitude, latitude = self.api_handler.get_enriched_data(address_ko, company_name)
                     
-                    # Use fetched English address if available, otherwise Romanize
-                    if address_en_fetched:
-                        address_en = address_en_fetched
-                        logger.info(f"Using actual English address from NCP: {address_en}")
-                    else:
-                        address_en = self.api_handler.get_romanized_text(address_ko)
-                        logger.info(f"Falling back to Romanized address: {address_en}")
-                    
-                    logger.info(f"Enriched Data -> Phone: {phone}, Zip: {zip_code}")
-
-                    # Loading Template
                     wb = openpyxl.load_workbook(self.form_path)
                     ws = wb["CORSIA"] if "CORSIA" in wb.sheetnames else wb.active
-                    logger.debug(f"Template loaded. active sheet: {ws.title}")
 
-                    # Filling via _safe_write (Handles Merged Cells)
-                    self._safe_write(ws, 'C4', f"{company_name_en} / {company_name}")
-                    self._safe_write(ws, 'C5', f"{address_en} / {address_ko}")
+                    self._safe_write(ws, 'C4', company_name)
+                    self._safe_write(ws, 'C5', address_ko)
                     self._safe_write(ws, 'C7', zip_code)
                     self._safe_write(ws, 'C8', phone)
                     self._safe_write(ws, 'B12', f"수거일 : {date_val}")
@@ -177,18 +145,12 @@ class ExcelHandler:
                     self._safe_write(ws, 'A22', f"{company_name}/{date_filename}")
                     self._safe_write(ws, 'C22', representative)
 
-                    # Signature
                     self._add_signature(ws)
-                    
-                    # Reinforce borders for F14, F16-19
                     self._reinforce_borders(ws)
 
-
-                    # Save
                     template_name = os.path.splitext(os.path.basename(self.form_path))[0]
                     base_filename = f"{template_name}_{company_name}"
                     
-                    # Prepend markers if data is missing
                     if not phone:
                         base_filename = f"전화번호_{base_filename}"
                     if not zip_code:
@@ -201,19 +163,12 @@ class ExcelHandler:
                     while os.path.exists(save_path):
                         save_filename = f"{base_filename}_{counter}.xlsx"
                         save_path = os.path.join(output_dir, save_filename)
-                        logger.info(f"File exists, trying new name: {save_filename}")
                         counter += 1
                     
                     wb.save(save_path)
-                    
                     logger.info(f"Saved: {save_path}")
                     processed_count += 1
                     
-                    # Debugging: Stop after the first row as requested
-                    logger.info("Debug mode: Stopping after the first row.")
-                    # if processed_count == 3:
-                    #     break
-
                 except Exception as row_error:
                     logger.error(f"Error in row {index + 1}: {row_error}", exc_info=True)
                     continue
@@ -223,4 +178,188 @@ class ExcelHandler:
 
         except Exception as e:
             logger.critical(f"Critical error in ExcelHandler: {e}", exc_info=True)
+            raise e
+
+class KakaoExcelHandler(ExcelHandler):
+    def __init__(self, source_path, form_path, signature_dir, api_handler):
+        super().__init__(source_path, form_path, signature_dir, api_handler)
+        logger.info("KakaoExcelHandler initialized")
+
+    def _reinforce_kakao_borders(self, ws):
+        """Reinforces the right border specifically for the Kakao template (I-column), handling merged cells."""
+        from openpyxl.styles.borders import Border, Side
+        thin = Side(border_style="thin", color="000000")
+        target_cells = ['I18', 'I21', 'I22', 'I23', 'I33', 'I34']
+        
+        for coord in target_cells:
+            # Find the actual range if merged
+            target_range = None
+            for r in ws.merged_cells.ranges:
+                if coord in r:
+                    target_range = r
+                    break
+            
+            if target_range:
+                # Apply ONLY to the right edge of the merged range
+                for row in range(target_range.min_row, target_range.max_row + 1):
+                    cell = ws.cell(row=row, column=target_range.max_col)
+                    e = cell.border
+                    cell.border = Border(
+                        left=e.left,
+                        right=thin,
+                        top=e.top,
+                        bottom=e.bottom
+                    )
+            else:
+                # Single cell - Only enforce right border
+                cell = ws[coord]
+                e = cell.border
+                cell.border = Border(
+                    left=e.left,
+                    right=thin,
+                    top=e.top,
+                    bottom=e.bottom
+                )
+            logger.debug(f"Reinforced Kakao right border for {coord}")
+
+    def _save_as_pdf(self, excel_path):
+        """Attempts to save the Excel file as PDF on Mac."""
+        pdf_path = excel_path.replace(".xlsx", ".pdf")
+        try:
+            import subprocess
+            # Attempt 1: Using AppleScript (Microsoft Excel required)
+            script = f'''
+            set inputPath to POSIX file "{excel_path}"
+            set outputPath to POSIX file "{pdf_path}"
+            tell application "Microsoft Excel"
+                open inputPath
+                save active workbook in outputPath as PDF file format
+                close active workbook saving no
+            end tell
+            '''
+            result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
+            if result.returncode == 0:
+                logger.info(f"PDF saved successfully: {pdf_path}")
+                return True
+            else:
+                logger.warning(f"AppleScript failed (Excel might not be installed): {result.stderr}")
+                
+            # Attempt 2: Using LibreOffice if available
+            res = subprocess.run(['soffice', '--headless', '--convert-to', 'pdf', '--outdir', os.path.dirname(excel_path), excel_path], capture_output=True)
+            if res.returncode == 0:
+                logger.info(f"PDF saved via LibreOffice: {pdf_path}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"PDF conversion error: {e}")
+        
+        logger.warning("PDF conversion failed. Falling back to Excel only.")
+        return False
+
+    def process(self):
+        """Kakao-only specific processing logic."""
+        try:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            output_dir = os.path.join(os.getcwd(), today_str)
+            no_phone_dir = os.path.join(output_dir, "NoData")
+            
+            for d in [output_dir, no_phone_dir]:
+                if not os.path.exists(d):
+                    os.makedirs(d)
+
+            logger.info(f"Reading source file: {self.source_path}")
+            df = pd.read_excel(self.source_path, header=5)
+            logger.info(f"Total rows: {len(df)}")
+
+            processed_count = 0
+            for index, row in df.iterrows():
+                try:
+                    logger.info(f"Processing row {index + 1}...")
+                    
+                    raw_date = row.iloc[1]
+                    date_val, date_filename = self._format_date(raw_date)
+                    if date_val == "":
+                        logger.warning(f"Skipping row {index + 1}: Invalid or missing date.")
+                        continue
+                    representative = str(row.iloc[2]).strip()
+                    company_name = str(row.iloc[3]).strip()
+                    address_ko = str(row.iloc[4]).strip()
+                    weight = str(row.iloc[6]).strip()
+
+                    # Kakao Enrichment
+                    phone, zip_code, longitude, latitude = self.api_handler.get_kakao_data(address_ko, company_name)
+                    
+                    wb = openpyxl.load_workbook(self.form_path)
+                    ws = wb.active # Use the first sheet
+
+                    # C4: 상호명, C5: 주소(국문), C7: 대한민국 Republic of Korea, C8: 경도, F8: 위도, C9: 전화번호
+                    self._safe_write(ws, 'C4', company_name)
+                    self._safe_write(ws, 'C5', address_ko)
+                    self._safe_write(ws, 'C7', "대한민국 Republic of Korea")
+                    self._safe_write(ws, 'C8', latitude)
+                    self._safe_write(ws, 'F8', longitude)
+                    self._safe_write(ws, 'C9', phone)
+                    
+                    # Increase font size (sz=12) and bold it
+                    bold_large_font = InlineFont(b=True, sz=16)
+                    normal_large_font = InlineFont(sz=12)
+
+                    rich_text = CellRichText([
+                        TextBlock(normal_large_font, "By signing this self-declaration, I, "),
+                        TextBlock(bold_large_font, representative),
+                        TextBlock(normal_large_font, ", acting in my capacity as 담당자 and authorised representative of the Point of Origin, hereby declare, confirm and agree to the following on behalf of the Point of Origin:\n"),
+                        TextBlock(normal_large_font, "본 자가선언서에 서명함으로써, 본인 "),
+                        TextBlock(bold_large_font, representative),
+                        TextBlock(normal_large_font, " 는 담당자 의 직책으로서 Point of Origin의 권한 있는 대표로서 다음 사항을 Point of Origin 대신하여 선언하고, 확인하며, 이에 동의합니다.")
+                    ])
+                    self._safe_write(ws, 'A15', rich_text)
+                    
+                    # A16: 수거일, A17: DATE, C16: 수거량, C17: Quantity collected
+                    self._safe_write(ws, 'A16', f"수거일 : {date_val}")
+                    self._safe_write(ws, 'A17', f"DATE : {date_val}")
+                    self._safe_write(ws, 'C16', f"수거량 : {weight}kg")
+                    self._safe_write(ws, 'C17', f"Quantity collected : {weight}kg")
+                    
+                    # A35: 상호명/yyyyMMdd, D35: 대표자명/배출담당자, G35: 사인
+                    self._safe_write(ws, 'A35', f"{company_name}/{date_filename}")
+                    self._safe_write(ws, 'D35', f"{representative}/배출담당자")
+                    
+                    # Signature at G35 (col 6, row 34)
+                    self._add_signature(ws, row=34, col=6)
+                    
+                    # Reinforce template-specific borders
+                    self._reinforce_kakao_borders(ws)
+
+                    # Save Logic
+                    base_name = f"{company_name}_{date_filename}"
+                    target_dir = output_dir if phone else no_phone_dir
+                    
+                    save_filename = f"{base_name}.xlsx"
+                    save_path = os.path.join(target_dir, save_filename)
+                    
+                    counter = 1
+                    while os.path.exists(save_path):
+                        save_filename = f"{base_name}_{counter}.xlsx"
+                        save_path = os.path.join(target_dir, save_filename)
+                        counter += 1
+                        
+                    wb.save(save_path)
+                    if phone:
+                        logger.info(f"Saved Excel: {save_path}")
+                        # Convert to PDF
+                        # self._save_as_pdf(save_path)
+                    else:
+                        logger.info(f"Saved Excel (No Phone): {save_path}")
+                    
+                    processed_count += 1
+                    
+                except Exception as row_error:
+                    logger.error(f"Error in row {index + 1}: {row_error}", exc_info=True)
+                    continue
+
+            logger.info(f"Processing complete. {processed_count} files generated.")
+            return processed_count, today_str
+
+        except Exception as e:
+            logger.critical(f"Critical error in KakaoExcelHandler: {e}", exc_info=True)
             raise e
