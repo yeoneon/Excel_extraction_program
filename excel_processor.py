@@ -31,6 +31,17 @@ class ExcelHandler:
                     return
         cell.value = value
 
+    def _safe_read(self, ws, coordinate):
+        """Reads value from a cell, handling merged cells by finding the top-left coordinate."""
+        from openpyxl.cell.cell import MergedCell
+        cell = ws[coordinate]
+        if isinstance(cell, MergedCell):
+            for range_ in ws.merged_cells.ranges:
+                if coordinate in range_:
+                    root_coord = range_.coord.split(':')[0]
+                    return ws[root_coord].value
+        return cell.value
+
     def _format_date(self, raw_date):
         if pd.isna(raw_date):
             return "", "00000000"
@@ -101,7 +112,7 @@ class ExcelHandler:
         cell_b22.border = new_border_b22
         logger.debug("Reinforced top border for B22")
 
-    def process(self):
+    def process(self, convert_pdf=True, progress_callback=None):
         """Original processing logic (NCP + Kakao style)."""
         try:
             today_str = datetime.now().strftime("%Y-%m-%d")
@@ -115,7 +126,10 @@ class ExcelHandler:
             logger.info(f"Total rows to process: {len(df)}")
 
             processed_count = 0
+            total_rows = len(df)
             for index, row in df.iterrows():
+                if progress_callback:
+                    progress_callback(index, total_rows, f"Processing row {index + 1}/{total_rows}...")
                 try:
                     logger.info(f"Processing row {index + 1}...")
                     
@@ -222,8 +236,71 @@ class KakaoExcelHandler(ExcelHandler):
                 )
             logger.debug(f"Reinforced Kakao right border for {coord}")
 
+    def _convert_to_pdf_batch(self, excel_paths, pdf_dir=None, progress_callback=None, start_offset=0, total_steps=0):
+        """Processes multiple Excel files for PDF conversion in a single instance where possible."""
+        if not excel_paths:
+            return
+        
+        import sys
+        if sys.platform == "win32":
+            logger.info("Starting batch PDF conversion on Windows via Excel COM...")
+            excel = None
+            try:
+                import win32com.client
+                import pythoncom
+                pythoncom.CoInitialize()
+                # Use DispatchEx to ensure we use isolated instance
+                excel = win32com.client.DispatchEx("Excel.Application")
+                excel.Visible = False
+                excel.DisplayAlerts = False
+                excel.Interactive = False
+                
+                for i, excel_path in enumerate(excel_paths):
+                    if progress_callback:
+                        progress_callback(start_offset + i, total_steps, f"Converting PDF {i+1}/{len(excel_paths)}...")
+                    try:
+                        abs_excel_path = os.path.abspath(excel_path)
+                        if pdf_dir:
+                            base_name = os.path.splitext(os.path.basename(excel_path))[0]
+                            pdf_path = os.path.join(pdf_dir, f"{base_name}.pdf")
+                        else:
+                            pdf_path = os.path.splitext(excel_path)[0] + ".pdf"
+                        
+                        abs_pdf_path = os.path.abspath(pdf_path)
+                        
+                        if os.path.exists(abs_pdf_path):
+                            try: os.remove(abs_pdf_path)
+                            except: pass
+                            
+                        wb = excel.Workbooks.Open(abs_excel_path)
+                        ws = wb.Worksheets(1)
+                        ws.ExportAsFixedFormat(0, abs_pdf_path) # 0 = xlTypePDF
+                        wb.Close(False)
+                        logger.info(f"PDF saved: {pdf_path}")
+                    except Exception as row_e:
+                        logger.error(f"Failed to convert {excel_path}: {row_e}")
+                
+                excel.Quit()
+                pythoncom.CoUninitialize()
+                return True
+            except Exception as e:
+                logger.error(f"Critical error in batch PDF conversion: {e}")
+                if excel:
+                    try: excel.Quit()
+                    except: pass
+                return False
+        else:
+            # For non-Windows, fall back to individual calls or implement batching if needed
+            logger.info(f"Starting PDF conversion for {len(excel_paths)} files...")
+            for i, path in enumerate(excel_paths):
+                if progress_callback:
+                    progress_callback(start_offset + i, total_steps, f"Converting PDF {i+1}/{len(excel_paths)}...")
+                self._save_as_pdf(path, pdf_dir=pdf_dir)
+            return True
+
     def _save_as_pdf(self, excel_path, pdf_dir=None):
-        """Attempts to save the Excel file as PDF."""
+        """Attempts to save a single Excel file as PDF."""
+        # This keeps the original logic for single-file scenarios (like NCP style if ever needed)
         if pdf_dir:
             base_name = os.path.splitext(os.path.basename(excel_path))[0]
             pdf_path = os.path.join(pdf_dir, f"{base_name}.pdf")
@@ -233,69 +310,7 @@ class KakaoExcelHandler(ExcelHandler):
         
         import sys
         if sys.platform == "win32":
-            abs_excel_path = os.path.abspath(excel_path)
-            abs_pdf_path = os.path.abspath(pdf_path)
-            
-            # Avoid hanging when PDF exists by removing it first
-            if os.path.exists(abs_pdf_path):
-                try: os.remove(abs_pdf_path)
-                except: pass
-
-            excel = None
-            try:
-                import win32com.client
-                import pythoncom
-                pythoncom.CoInitialize()
-                # Use DispatchEx to ensure we use isolated instance and prevent hanging on existing ones
-                excel = win32com.client.DispatchEx("Excel.Application")
-                excel.Visible = False
-                excel.DisplayAlerts = False
-                excel.Interactive = False
-
-                wb = excel.Workbooks.Open(abs_excel_path)
-                ws = wb.Worksheets(1)
-                ws.ExportAsFixedFormat(0, abs_pdf_path) # 0 = xlTypePDF
-                
-                wb.Close(False)
-                excel.Quit()
-                pythoncom.CoUninitialize()
-                logger.info(f"PDF saved successfully via Excel COM: {pdf_path}")
-                return True
-            except ImportError:
-                logger.warning("pywin32 is not installed. Attempting PowerShell fallback...")
-                try:
-                    import subprocess
-                    ps_script = f'''
-$excel = New-Object -ComObject Excel.Application
-$excel.Visible = $false
-$excel.DisplayAlerts = $false
-try {{
-    $wb = $excel.Workbooks.Open("{abs_excel_path}")
-    $ws = $wb.Worksheets.Item(1)
-    $ws.ExportAsFixedFormat(0, "{abs_pdf_path}")
-    $wb.Close($false)
-}} finally {{
-    $excel.Quit()
-    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
-}}
-'''
-                    flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-                    res = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", "-"], input=ps_script, capture_output=True, text=True, creationflags=flags)
-                    if res.returncode == 0 and os.path.exists(abs_pdf_path):
-                        logger.info(f"PDF saved successfully via PowerShell: {pdf_path}")
-                        return True
-                    else:
-                        logger.error(f"PowerShell fallback failed: {res.stderr}")
-                        return False
-                except Exception as ps_e:
-                    logger.error(f"PowerShell fallback error: {ps_e}")
-                    return False
-            except Exception as e:
-                logger.error(f"PDF conversion error on Windows: {e}")
-                if excel:
-                    try: excel.Quit()
-                    except: pass
-                return False
+            return self._convert_to_pdf_batch([excel_path], pdf_dir=pdf_dir)
         else:
             try:
                 import subprocess
@@ -328,16 +343,17 @@ try {{
         logger.warning("PDF conversion failed. Falling back to Excel only.")
         return False
 
-    def process(self):
+    def process(self, convert_pdf=True, progress_callback=None):
         """Kakao-only specific processing logic."""
         try:
             today_str = datetime.now().strftime("%Y-%m-%d")
             base_dir = os.path.join(os.getcwd(), today_str)
             success_excel_dir = os.path.join(base_dir, "성공엑셀")
-            fail_excel_dir = os.path.join(base_dir, "오류엑셀(API)")
+            no_phone_dir = os.path.join(base_dir, "전화번호미기입 엑셀")
+            address_error_dir = os.path.join(base_dir, "주소오류 엑셀")
             pdf_dir = os.path.join(base_dir, "완성PDF")
             
-            for d in [success_excel_dir, fail_excel_dir, pdf_dir]:
+            for d in [success_excel_dir, no_phone_dir, address_error_dir, pdf_dir]:
                 if not os.path.exists(d):
                     os.makedirs(d)
 
@@ -346,7 +362,14 @@ try {{
             logger.info(f"Total rows: {len(df)}")
 
             processed_count = 0
+            excel_conversion_list = []
+            total_rows = len(df)
+            
             for index, row in df.iterrows():
+                if progress_callback:
+                    # Initial steps: rows / total (Excel + PDF)
+                    total_steps = total_rows + (total_rows if convert_pdf else 0)
+                    progress_callback(index, total_steps, f"Generating Excel {index + 1}/{total_rows}...")
                 try:
                     logger.info(f"Processing row {index + 1}...")
                     
@@ -374,19 +397,34 @@ try {{
                     self._safe_write(ws, 'F8', longitude)
                     self._safe_write(ws, 'C9', phone)
                     
-                    # Increase font size (sz=12) and bold it
-                    bold_large_font = InlineFont(b=True, sz=14)
-                    normal_large_font = InlineFont(sz=12)
-
-                    rich_text = CellRichText([
-                        TextBlock(normal_large_font, "By signing this self-declaration, I, "),
-                        TextBlock(bold_large_font, representative),
-                        TextBlock(normal_large_font, ", acting in my capacity as 담당자 and authorised representative of the Point of Origin, hereby declare, confirm and agree to the following on behalf of the Point of Origin:\n"),
-                        TextBlock(normal_large_font, "본 자가선언서에 서명함으로써, 본인 "),
-                        TextBlock(bold_large_font, representative),
-                        TextBlock(normal_large_font, "는 담당자 의 직책으로서 Point of Origin의 권한 있는 대표로서 다음 사항을 Point of Origin 대신하여 선언하고, 확인하며, 이에 동의합니다.")
-                    ])
-                    self._safe_write(ws, 'A15', rich_text)
+                    # A15: Dynamic template-based replacement for {대표자}
+                    template_text = self._safe_read(ws, 'A15')
+                    if isinstance(template_text, str) and "{대표자}" in template_text:
+                        bold_large_font = InlineFont(b=True, sz=14)
+                        normal_large_font = InlineFont(sz=12)
+                        parts = template_text.split("{대표자}")
+                        rich_text_elements = []
+                        for i, part in enumerate(parts):
+                            if part:
+                                rich_text_elements.append(TextBlock(normal_large_font, part))
+                            if i < len(parts) - 1:
+                                rich_text_elements.append(TextBlock(bold_large_font, representative))
+                        
+                        rich_text = CellRichText(rich_text_elements)
+                        self._safe_write(ws, 'A15', rich_text)
+                    else:
+                        # Fallback to the hardcoded bilingual text if template doesn't have the tag
+                        bold_large_font = InlineFont(b=True, sz=14)
+                        normal_large_font = InlineFont(sz=12)
+                        rich_text = CellRichText([
+                            TextBlock(normal_large_font, "By signing this self-declaration, I, "),
+                            TextBlock(bold_large_font, representative),
+                            TextBlock(normal_large_font, ", acting in my capacity as 담당자 and authorised representative of the Point of Origin, hereby declare, confirm and agree to the following on behalf of the Point of Origin:\n"),
+                            TextBlock(normal_large_font, "본 자가선언서에 서명함으로써, 본인 "),
+                            TextBlock(bold_large_font, representative),
+                            TextBlock(normal_large_font, "는 담당자 의 직책으로서 Point of Origin의 권한 있는 대표로서 다음 사항을 Point of Origin 대신하여 선언하고, 확인하며, 이에 동의합니다.")
+                        ])
+                        self._safe_write(ws, 'A15', rich_text)
                     
                     # A16: 수거일, A17: DATE, C16: 수거량, C17: Quantity collected
                     self._safe_write(ws, 'A16', f"수거일 : {date_val}")
@@ -406,7 +444,15 @@ try {{
 
                     # Save Logic
                     base_name = f"{company_name}_{date_filename}"
-                    target_dir = success_excel_dir if phone else fail_excel_dir
+                    
+                    # Determine target directory
+                    is_success = bool(phone and zip_code and longitude and latitude)
+                    if is_success:
+                        target_dir = success_excel_dir
+                    elif not phone:
+                        target_dir = no_phone_dir
+                    else:
+                        target_dir = address_error_dir
                     
                     save_filename = f"{base_name}.xlsx"
                     save_path = os.path.join(target_dir, save_filename)
@@ -418,18 +464,28 @@ try {{
                         counter += 1
                         
                     wb.save(save_path)
-                    if phone:
+                    if is_success:
                         logger.info(f"Saved Excel: {save_path}")
-                        # Convert to PDF
-                        self._save_as_pdf(save_path, pdf_dir=pdf_dir)
-                    else:
+                        # Defer PDF conversion only for successful cases
+                        excel_conversion_list.append(save_path)
+                    elif not phone:
                         logger.info(f"Saved Excel (No Phone): {save_path}")
+                    else:
+                        logger.info(f"Saved Excel (Address Error): {save_path}")
                     
                     processed_count += 1
                     
                 except Exception as row_error:
                     logger.error(f"Error in row {index + 1}: {row_error}", exc_info=True)
                     continue
+
+            # Perform PDF conversion after all Excel files are generated
+            if convert_pdf and excel_conversion_list:
+                total_steps = total_rows + len(excel_conversion_list)
+                self._convert_to_pdf_batch(excel_conversion_list, pdf_dir=pdf_dir, progress_callback=progress_callback, start_offset=total_rows, total_steps=total_steps)
+
+            if progress_callback:
+                progress_callback(total_steps, total_steps, "Complete!")
 
             logger.info(f"Processing complete. {processed_count} files generated.")
             return processed_count, today_str

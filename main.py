@@ -26,30 +26,31 @@ class ExcelProcessorApp(ctk.CTk):
         self.kakao_api_key = ""
         self.ncp_client_id = ""
         self.ncp_client_secret = ""
+        self.convert_pdf_var = ctk.BooleanVar(value=True)
         
         self.load_settings()
         logger.info("Application started")
 
-        # Main Container
-        self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.main_frame.pack(fill="both", expand=True, padx=40, pady=20)
+        # Main Container (Scrollable to prevent UI clipping)
+        self.main_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.main_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
         # UI Sections
         self.source_label = self.create_section(self.main_frame, "📂 추출을 원하는 엑셀 파일", "파일을 선택하세요", self.select_source_file)
         if self.source_file_path:
             self.source_label.configure(text=os.path.basename(self.source_file_path), text_color="black")
             
-        self.add_spacing(self.main_frame, 20)
+        self.add_spacing(self.main_frame, 10)
         self.form_label = self.create_section(self.main_frame, "📋 폼 엑셀 파일", "폼 파일을 선택하세요", self.select_form_file)
         if self.form_file_path:
             self.form_label.configure(text=os.path.basename(self.form_file_path), text_color="black")
             
-        self.add_spacing(self.main_frame, 20)
-        self.sig_label = self.create_section(self.main_frame, "✍️ 서명 이미지 폴더", "서명 폴더를 선택하세요", self.select_signature_dir, button_text="폴더 선택")
+        self.add_spacing(self.main_frame, 10)
+        self.sig_label = self.create_section(self.main_frame, "✍️ 서명 이미지 폴더", "서명 폴더를 선택하세요", self.select_signature_dir, "폴더 선택")
         if self.signature_dir:
             self.sig_label.configure(text=os.path.basename(self.signature_dir), text_color="black")
             
-        self.add_spacing(self.main_frame, 20)
+        self.add_spacing(self.main_frame, 10)
         
         # API Settings Section
         self.api_frame = ctk.CTkFrame(self.main_frame, fg_color="white", corner_radius=0)
@@ -61,11 +62,35 @@ class ExcelProcessorApp(ctk.CTk):
         self.api_status_label.pack(side="left", padx=10, pady=5)
         ctk.CTkButton(self.api_frame, text="설정", width=60, height=30, fg_color=PRIMARY_COLOR, hover_color=HOVER_COLOR, command=self.open_api_settings).pack(side="right", padx=10, pady=5)
 
-        self.add_spacing(self.main_frame, 40)
-
+        if not SHOW_NCP_SETTINGS:
+            self.add_spacing(self.main_frame, 10)
+            self.pdf_toggle_frame = ctk.CTkFrame(self.main_frame, fg_color="white", corner_radius=0)
+            self.pdf_toggle_frame.pack(fill="x", pady=5)
+            self.pdf_checkbox = ctk.CTkCheckBox(
+                self.pdf_toggle_frame, 
+                text="Excel 파일을 PDF로 변환", 
+                variable=self.convert_pdf_var,
+                command=self.save_settings,
+                font=("Malgun Gothic", 14),
+                fg_color=PRIMARY_COLOR,
+                hover_color=HOVER_COLOR
+            )
+            self.pdf_checkbox.pack(side="left", padx=10, pady=10)
+        
+        self.add_spacing(self.main_frame, 10)
         # Run Button
         self.run_button = ctk.CTkButton(self.main_frame, text="📂 모든 정보를 설정해주세요", height=45, state="disabled", fg_color="#A0A0A0", text_color="white", command=self.process_excel)
-        self.run_button.pack(fill="x")
+        self.run_button.pack(fill="x", pady=(0, 20))
+        
+        # Progress Section
+        self.progress_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        
+        self.progress_bar = ctk.CTkProgressBar(self.progress_frame, orientation="horizontal", height=10, fg_color="#E0E0E0", progress_color=PRIMARY_COLOR)
+        self.progress_bar.set(0)
+        self.progress_bar.pack(fill="x")
+        
+        self.progress_frame.pack_forget() # Hide initially
+
 
         self.update_api_status()
 
@@ -149,7 +174,7 @@ class ExcelProcessorApp(ctk.CTk):
             self.save_settings()
             self.update_api_status()
             dialog.destroy()
-        ctk.CTkButton(dialog, text="저장", command=save).pack(pady=20)
+        ctk.CTkButton(dialog, text="저장", fg_color=PRIMARY_COLOR, hover_color=HOVER_COLOR, command=save).pack(pady=20)
 
     def update_api_status(self):
         is_set = False
@@ -175,6 +200,7 @@ class ExcelProcessorApp(ctk.CTk):
                     self.source_file_path = settings.get("source_file_path", "")
                     self.form_file_path = settings.get("form_file_path", "")
                     self.signature_dir = settings.get("signature_dir", "")
+                    self.convert_pdf_var.set(settings.get("convert_pdf", True))
             except Exception as e:
                 logger.error(f"Failed to load settings: {e}")
 
@@ -186,7 +212,8 @@ class ExcelProcessorApp(ctk.CTk):
                 "ncp_client_secret": self.ncp_client_secret,
                 "source_file_path": self.source_file_path,
                 "form_file_path": self.form_file_path,
-                "signature_dir": self.signature_dir
+                "signature_dir": self.signature_dir,
+                "convert_pdf": self.convert_pdf_var.get()
             }
             with open("settings.json", "w") as f:
                 json.dump(settings, f)
@@ -202,14 +229,25 @@ class ExcelProcessorApp(ctk.CTk):
         else:
             self.run_button.configure(state="disabled", text="📂 모든 정보를 설정해주세요", fg_color="#A0A0A0")
 
+    def update_progress_ui(self, current, total, message):
+        if total > 0:
+            val = current / total
+            self.progress_bar.set(val)
+        if current == 0:
+            self.progress_frame.pack(fill="x", pady=(10, 20))
+
     def process_excel(self):
         try:
             logger.info(f"Button 'Execute' clicked (SHOW_NCP={SHOW_NCP_SETTINGS}). Starting process...")
             self.run_button.configure(state="disabled", text="진행 중...", fg_color="#A0A0A0")
+            self.progress_bar.set(0)
             
             import threading
             def run_task():
                 try:
+                    def progress_cb(current, total, message):
+                        self.after(0, lambda: self.update_progress_ui(current, total, message))
+
                     if SHOW_NCP_SETTINGS:
                         api_handler = APIHandler(
                             ncp_client_id=self.ncp_client_id,
@@ -223,7 +261,10 @@ class ExcelProcessorApp(ctk.CTk):
                         )
                         excel_handler = KakaoExcelHandler(self.source_file_path, self.form_file_path, self.signature_dir, api_handler)
                     
-                    count, folder = excel_handler.process()
+                    count, folder = excel_handler.process(
+                        convert_pdf=self.convert_pdf_var.get(),
+                        progress_callback=progress_cb
+                    )
                     
                     self.after(0, lambda: messagebox.showinfo("완료", f"데이터 처리가 완료되었습니다!\n총 {count}개의 파일이 '{folder}' 폴더에 저장되었습니다."))
                     logger.info("Excel processing successful.")
@@ -231,7 +272,7 @@ class ExcelProcessorApp(ctk.CTk):
                     logger.critical(f"Process failed: {e}", exc_info=True)
                     self.after(0, lambda: messagebox.showerror("오류", f"처리 중 오류가 발생했습니다. 로그 파일을 확인해주세요.\n\n{str(e)}"))
                 finally:
-                    self.after(0, self.check_files_selected)
+                    self.after(0, lambda: [self.check_files_selected(), self.progress_frame.pack_forget()])
 
             threading.Thread(target=run_task, daemon=True).start()
 
