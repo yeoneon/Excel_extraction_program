@@ -8,6 +8,8 @@ from excel_processor import ExcelHandler, KakaoExcelHandler
 
 # --- Configuration ---
 SHOW_NCP_SETTINGS = False
+PRIMARY_COLOR = "#1FA1FF" if SHOW_NCP_SETTINGS else "#217346"
+HOVER_COLOR = "#0080FF" if SHOW_NCP_SETTINGS else "#1e653d"
 # ---------------------
 
 class ExcelProcessorApp(ctk.CTk):
@@ -43,7 +45,7 @@ class ExcelProcessorApp(ctk.CTk):
             self.form_label.configure(text=os.path.basename(self.form_file_path), text_color="black")
             
         self.add_spacing(self.main_frame, 20)
-        self.sig_label = self.create_section(self.main_frame, "✍️ 서명 이미지 폴더", "서명 폴더를 선택하세요", self.select_signature_dir)
+        self.sig_label = self.create_section(self.main_frame, "✍️ 서명 이미지 폴더", "서명 폴더를 선택하세요", self.select_signature_dir, button_text="폴더 선택")
         if self.signature_dir:
             self.sig_label.configure(text=os.path.basename(self.signature_dir), text_color="black")
             
@@ -57,7 +59,7 @@ class ExcelProcessorApp(ctk.CTk):
         ctk.CTkLabel(self.api_frame, text=api_title, font=("Malgun Gothic", 16, "bold"), anchor="w").pack(fill="x", padx=10, pady=(10, 5))
         self.api_status_label = ctk.CTkLabel(self.api_frame, text="API 키를 설정해주세요", font=("Malgun Gothic", 12), text_color="#666666")
         self.api_status_label.pack(side="left", padx=10, pady=5)
-        ctk.CTkButton(self.api_frame, text="설정", width=60, height=30, fg_color="#1FA1FF", command=self.open_api_settings).pack(side="right", padx=10, pady=5)
+        ctk.CTkButton(self.api_frame, text="설정", width=60, height=30, fg_color=PRIMARY_COLOR, hover_color=HOVER_COLOR, command=self.open_api_settings).pack(side="right", padx=10, pady=5)
 
         self.add_spacing(self.main_frame, 40)
 
@@ -67,7 +69,7 @@ class ExcelProcessorApp(ctk.CTk):
 
         self.update_api_status()
 
-    def create_section(self, parent, title_text, placeholder_text, button_command):
+    def create_section(self, parent, title_text, placeholder_text, button_command, button_text="파일 선택"):
         section_frame = ctk.CTkFrame(parent, fg_color="white", corner_radius=0)
         section_frame.pack(fill="x", pady=5)
         ctk.CTkLabel(section_frame, text=title_text, font=("Malgun Gothic", 16, "bold"), anchor="w").pack(fill="x", padx=10, pady=(10, 5))
@@ -76,7 +78,7 @@ class ExcelProcessorApp(ctk.CTk):
         path_frame.pack_propagate(False)
         path_label = ctk.CTkLabel(path_frame, text=placeholder_text, font=("Malgun Gothic", 12), text_color="#666666")
         path_label.pack(expand=True)
-        ctk.CTkButton(section_frame, text="파일 선택", fg_color="#1FA1FF", hover_color="#0080FF", corner_radius=2, text_color="white", command=lambda: button_command(path_label)).pack(pady=(5, 15))
+        ctk.CTkButton(section_frame, text=button_text, fg_color=PRIMARY_COLOR, hover_color=HOVER_COLOR, corner_radius=2, text_color="white", command=lambda: button_command(path_label)).pack(pady=(5, 15))
         return path_label
 
     def add_spacing(self, parent, size):
@@ -196,7 +198,7 @@ class ExcelProcessorApp(ctk.CTk):
             return
             
         if all([self.source_file_path, self.form_file_path, self.signature_dir, self.kakao_api_key]):
-            self.run_button.configure(state="normal", text="📊 추출 및 실행하기", fg_color="#1FA1FF")
+            self.run_button.configure(state="normal", text="📊 추출 및 실행하기", fg_color=PRIMARY_COLOR)
         else:
             self.run_button.configure(state="disabled", text="📂 모든 정보를 설정해주세요", fg_color="#A0A0A0")
 

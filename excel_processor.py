@@ -222,36 +222,108 @@ class KakaoExcelHandler(ExcelHandler):
                 )
             logger.debug(f"Reinforced Kakao right border for {coord}")
 
-    def _save_as_pdf(self, excel_path):
-        """Attempts to save the Excel file as PDF on Mac."""
-        pdf_path = excel_path.replace(".xlsx", ".pdf")
-        try:
-            import subprocess
-            # Attempt 1: Using AppleScript (Microsoft Excel required)
-            script = f'''
-            set inputPath to POSIX file "{excel_path}"
-            set outputPath to POSIX file "{pdf_path}"
-            tell application "Microsoft Excel"
-                open inputPath
-                save active workbook in outputPath as PDF file format
-                close active workbook saving no
-            end tell
-            '''
-            result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
-            if result.returncode == 0:
-                logger.info(f"PDF saved successfully: {pdf_path}")
-                return True
-            else:
-                logger.warning(f"AppleScript failed (Excel might not be installed): {result.stderr}")
+    def _save_as_pdf(self, excel_path, pdf_dir=None):
+        """Attempts to save the Excel file as PDF."""
+        if pdf_dir:
+            base_name = os.path.splitext(os.path.basename(excel_path))[0]
+            pdf_path = os.path.join(pdf_dir, f"{base_name}.pdf")
+        else:
+            base_name = os.path.splitext(excel_path)[0]
+            pdf_path = f"{base_name}.pdf"
+        
+        import sys
+        if sys.platform == "win32":
+            abs_excel_path = os.path.abspath(excel_path)
+            abs_pdf_path = os.path.abspath(pdf_path)
+            
+            # Avoid hanging when PDF exists by removing it first
+            if os.path.exists(abs_pdf_path):
+                try: os.remove(abs_pdf_path)
+                except: pass
+
+            excel = None
+            try:
+                import win32com.client
+                import pythoncom
+                pythoncom.CoInitialize()
+                # Use DispatchEx to ensure we use isolated instance and prevent hanging on existing ones
+                excel = win32com.client.DispatchEx("Excel.Application")
+                excel.Visible = False
+                excel.DisplayAlerts = False
+                excel.Interactive = False
+
+                wb = excel.Workbooks.Open(abs_excel_path)
+                ws = wb.Worksheets(1)
+                ws.ExportAsFixedFormat(0, abs_pdf_path) # 0 = xlTypePDF
                 
-            # Attempt 2: Using LibreOffice if available
-            res = subprocess.run(['soffice', '--headless', '--convert-to', 'pdf', '--outdir', os.path.dirname(excel_path), excel_path], capture_output=True)
-            if res.returncode == 0:
-                logger.info(f"PDF saved via LibreOffice: {pdf_path}")
+                wb.Close(False)
+                excel.Quit()
+                pythoncom.CoUninitialize()
+                logger.info(f"PDF saved successfully via Excel COM: {pdf_path}")
                 return True
-                
-        except Exception as e:
-            logger.error(f"PDF conversion error: {e}")
+            except ImportError:
+                logger.warning("pywin32 is not installed. Attempting PowerShell fallback...")
+                try:
+                    import subprocess
+                    ps_script = f'''
+$excel = New-Object -ComObject Excel.Application
+$excel.Visible = $false
+$excel.DisplayAlerts = $false
+try {{
+    $wb = $excel.Workbooks.Open("{abs_excel_path}")
+    $ws = $wb.Worksheets.Item(1)
+    $ws.ExportAsFixedFormat(0, "{abs_pdf_path}")
+    $wb.Close($false)
+}} finally {{
+    $excel.Quit()
+    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
+}}
+'''
+                    flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                    res = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", "-"], input=ps_script, capture_output=True, text=True, creationflags=flags)
+                    if res.returncode == 0 and os.path.exists(abs_pdf_path):
+                        logger.info(f"PDF saved successfully via PowerShell: {pdf_path}")
+                        return True
+                    else:
+                        logger.error(f"PowerShell fallback failed: {res.stderr}")
+                        return False
+                except Exception as ps_e:
+                    logger.error(f"PowerShell fallback error: {ps_e}")
+                    return False
+            except Exception as e:
+                logger.error(f"PDF conversion error on Windows: {e}")
+                if excel:
+                    try: excel.Quit()
+                    except: pass
+                return False
+        else:
+            try:
+                import subprocess
+                # Attempt 1: Using AppleScript (Microsoft Excel required)
+                script = f'''
+                set inputPath to POSIX file "{excel_path}"
+                set outputPath to POSIX file "{pdf_path}"
+                tell application "Microsoft Excel"
+                    open inputPath
+                    save sheet 1 of active workbook in outputPath as PDF file format
+                    close active workbook saving no
+                end tell
+                '''
+                result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
+                if result.returncode == 0:
+                    logger.info(f"PDF saved successfully: {pdf_path}")
+                    return True
+                else:
+                    logger.warning(f"AppleScript failed (Excel might not be installed): {result.stderr}")
+                    
+                # Attempt 2: Using LibreOffice if available
+                res = subprocess.run(['soffice', '--headless', '--convert-to', 'pdf', '--outdir', os.path.dirname(excel_path), excel_path], capture_output=True)
+                if res.returncode == 0:
+                    logger.info(f"PDF saved via LibreOffice: {pdf_path}")
+                    return True
+                    
+            except Exception as e:
+                logger.error(f"PDF conversion error: {e}")
         
         logger.warning("PDF conversion failed. Falling back to Excel only.")
         return False
@@ -260,10 +332,12 @@ class KakaoExcelHandler(ExcelHandler):
         """Kakao-only specific processing logic."""
         try:
             today_str = datetime.now().strftime("%Y-%m-%d")
-            output_dir = os.path.join(os.getcwd(), today_str)
-            no_phone_dir = os.path.join(output_dir, "NoData")
+            base_dir = os.path.join(os.getcwd(), today_str)
+            success_excel_dir = os.path.join(base_dir, "성공엑셀")
+            fail_excel_dir = os.path.join(base_dir, "오류엑셀(API)")
+            pdf_dir = os.path.join(base_dir, "완성PDF")
             
-            for d in [output_dir, no_phone_dir]:
+            for d in [success_excel_dir, fail_excel_dir, pdf_dir]:
                 if not os.path.exists(d):
                     os.makedirs(d)
 
@@ -301,7 +375,7 @@ class KakaoExcelHandler(ExcelHandler):
                     self._safe_write(ws, 'C9', phone)
                     
                     # Increase font size (sz=12) and bold it
-                    bold_large_font = InlineFont(b=True, sz=16)
+                    bold_large_font = InlineFont(b=True, sz=14)
                     normal_large_font = InlineFont(sz=12)
 
                     rich_text = CellRichText([
@@ -332,7 +406,7 @@ class KakaoExcelHandler(ExcelHandler):
 
                     # Save Logic
                     base_name = f"{company_name}_{date_filename}"
-                    target_dir = output_dir if phone else no_phone_dir
+                    target_dir = success_excel_dir if phone else fail_excel_dir
                     
                     save_filename = f"{base_name}.xlsx"
                     save_path = os.path.join(target_dir, save_filename)
@@ -347,7 +421,7 @@ class KakaoExcelHandler(ExcelHandler):
                     if phone:
                         logger.info(f"Saved Excel: {save_path}")
                         # Convert to PDF
-                        # self._save_as_pdf(save_path)
+                        self._save_as_pdf(save_path, pdf_dir=pdf_dir)
                     else:
                         logger.info(f"Saved Excel (No Phone): {save_path}")
                     
