@@ -205,27 +205,40 @@ class ExcelProcessorApp(ctk.CTk):
     def process_excel(self):
         try:
             logger.info(f"Button 'Execute' clicked (SHOW_NCP={SHOW_NCP_SETTINGS}). Starting process...")
+            self.run_button.configure(state="disabled", text="진행 중...", fg_color="#A0A0A0")
             
-            if SHOW_NCP_SETTINGS:
-                api_handler = APIHandler(
-                    ncp_client_id=self.ncp_client_id,
-                    ncp_client_secret=self.ncp_client_secret,
-                    kakao_api_key=self.kakao_api_key
-                )
-                excel_handler = ExcelHandler(self.source_file_path, self.form_file_path, self.signature_dir, api_handler)
-            else:
-                api_handler = KakaoAPIHandler(
-                    kakao_api_key=self.kakao_api_key
-                )
-                excel_handler = KakaoExcelHandler(self.source_file_path, self.form_file_path, self.signature_dir, api_handler)
-            
-            count, folder = excel_handler.process()
-            
-            messagebox.showinfo("완료", f"데이터 처리가 완료되었습니다!\n총 {count}개의 파일이 '{folder}' 폴더에 저장되었습니다.")
-            logger.info("Excel processing successful.")
+            import threading
+            def run_task():
+                try:
+                    if SHOW_NCP_SETTINGS:
+                        api_handler = APIHandler(
+                            ncp_client_id=self.ncp_client_id,
+                            ncp_client_secret=self.ncp_client_secret,
+                            kakao_api_key=self.kakao_api_key
+                        )
+                        excel_handler = ExcelHandler(self.source_file_path, self.form_file_path, self.signature_dir, api_handler)
+                    else:
+                        api_handler = KakaoAPIHandler(
+                            kakao_api_key=self.kakao_api_key
+                        )
+                        excel_handler = KakaoExcelHandler(self.source_file_path, self.form_file_path, self.signature_dir, api_handler)
+                    
+                    count, folder = excel_handler.process()
+                    
+                    self.after(0, lambda: messagebox.showinfo("완료", f"데이터 처리가 완료되었습니다!\n총 {count}개의 파일이 '{folder}' 폴더에 저장되었습니다."))
+                    logger.info("Excel processing successful.")
+                except Exception as e:
+                    logger.critical(f"Process failed: {e}", exc_info=True)
+                    self.after(0, lambda: messagebox.showerror("오류", f"처리 중 오류가 발생했습니다. 로그 파일을 확인해주세요.\n\n{str(e)}"))
+                finally:
+                    self.after(0, self.check_files_selected)
+
+            threading.Thread(target=run_task, daemon=True).start()
+
         except Exception as e:
-            logger.critical(f"Process failed: {e}", exc_info=True)
-            messagebox.showerror("오류", f"처리 중 오류가 발생했습니다. 로그 파일을 확인해주세요.\n\n{str(e)}")
+            logger.critical(f"Failed to start thread: {e}", exc_info=True)
+            messagebox.showerror("오류", f"프로세스 시작 중 오류가 발생했습니다.\n\n{str(e)}")
+            self.check_files_selected()
 
 if __name__ == "__main__":
     app = ExcelProcessorApp()
